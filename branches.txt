@@ -11,3 +11,4 @@ fix/tell-host-when-reschedule-request-expires
 fix/quill-greeting-line-break
 feature/multiple-durations
 fix/bump-ical-sequence-on-reschedule
+fix/quick-add-default-slot-near-midnight
