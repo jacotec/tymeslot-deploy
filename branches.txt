@@ -9,3 +9,4 @@ fix/host-email-locale
 fix/cancel-calendar-entry-after-declined-reschedule
 fix/tell-host-when-reschedule-request-expires
 fix/quill-greeting-line-break
+feature/multiple-durations
