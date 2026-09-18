@@ -1,0 +1,208 @@
+name: Build deploy image
+
+# Builds ghcr.io/jacotec/tymeslot from the latest upstream Tymeslot release
+# with the branches in branches.txt merged on top, after the test suite has
+# passed on exactly that tree.
+#
+# The nightly run only builds when something changed since the published
+# image: a new upstream release, a new commit on one of the branches, or a
+# change to this repository's branch list, scripts or recorded resolutions.
+
+on:
+  schedule:
+    # 02:43 UTC, off the hour: GitHub's scheduler is most contended at :00.
+    - cron: "43 2 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Build even if nothing changed since the published image
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-deploy-image
+  cancel-in-progress: false
+
+env:
+  FORK_URL: https://github.com/jacotec/tymeslot.git
+  UPSTREAM_URL: https://github.com/Tymeslot/tymeslot.git
+  IMAGE: ghcr.io/jacotec/tymeslot
+  FINGERPRINT_LABEL: io.github.jacotec.tymeslot-deploy.fingerprint
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Work out what would be built
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+
+          tag=$(git ls-remote --tags --refs "$UPSTREAM_URL" 'v*' \
+            | sed 's#.*refs/tags/##' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sort -V | tail -n 1)
+
+          {
+            echo "release $tag $(git ls-remote "$UPSTREAM_URL" "refs/tags/$tag" | cut -f1)"
+            for branch in $(grep -vE '^\s*(#|$)' branches.txt); do
+              sha=$(git ls-remote "$FORK_URL" "refs/heads/$branch" | cut -f1)
+              if [ -z "$sha" ]; then
+                echo "::error::Branch $branch does not exist in $FORK_URL" >&2
+                exit 1
+              fi
+              echo "branch $branch $sha"
+            done
+          } > plan.txt
+
+          fingerprint=$(
+            {
+              cat plan.txt
+              cat scripts/*
+              if [ -d rr-cache ]; then find rr-cache -type f | sort | xargs cat; fi
+            } | sha256sum | cut -c1-16
+          )
+
+          published=""
+          if skopeo inspect --creds "$GITHUB_ACTOR:$GITHUB_TOKEN" --config \
+               "docker://$IMAGE:deploy" > image-config.json 2>/dev/null; then
+            published=$(jq -r --arg label "$FINGERPRINT_LABEL" \
+              '.config.Labels[$label] // empty' image-config.json)
+          fi
+
+          if [ "$FORCE" = "true" ] || [ "$fingerprint" != "$published" ]; then
+            build=true
+          else
+            build=false
+          fi
+
+          {
+            echo "tag=$tag"
+            echo "fingerprint=$fingerprint"
+            echo "build=$build"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Deploy image plan"
+            echo
+            echo '```'
+            cat plan.txt
+            echo '```'
+            echo
+            echo "Fingerprint \`$fingerprint\`, published image \`${published:-none}\`."
+            echo
+            if [ "$build" = "true" ]; then echo "**Building.**"; else echo "**Nothing changed, not building.**"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Assemble the deploy tree
+        if: steps.plan.outputs.build == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.plan.outputs.tag }}
+        run: scripts/assemble.sh src
+
+      - uses: erlef/setup-beam@v1
+        if: steps.plan.outputs.build == 'true'
+        with:
+          version-file: src/.tool-versions
+          version-type: strict
+
+      - uses: actions/cache@v5
+        if: steps.plan.outputs.build == 'true'
+        with:
+          path: |
+            src/deps
+            src/_build
+          key: ${{ runner.os }}-mix-${{ hashFiles('src/.tool-versions', 'src/mix.lock') }}-${{ steps.plan.outputs.fingerprint }}
+          restore-keys: |
+            ${{ runner.os }}-mix-${{ hashFiles('src/.tool-versions', 'src/mix.lock') }}-
+
+      - name: Fetch dependencies
+        if: steps.plan.outputs.build == 'true'
+        working-directory: src
+        run: mix deps.get
+
+      # The branches each add translations; after merging them the catalogues
+      # are regenerated once, and a fuzzy entry means a merge went wrong.
+      - name: Normalise translations
+        if: steps.plan.outputs.build == 'true'
+        working-directory: src
+        env:
+          MIX_ENV: dev
+        run: |
+          mix gettext.extract --merge
+          if grep -l ', fuzzy' priv/gettext/*/LC_MESSAGES/*.po; then
+            echo "::error::Fuzzy translations after merging the branches"
+            exit 1
+          fi
+
+      - name: Compile
+        if: steps.plan.outputs.build == 'true'
+        working-directory: src
+        env:
+          MIX_ENV: test
+        run: mix compile --warnings-as-errors
+
+      - name: Test
+        if: steps.plan.outputs.build == 'true'
+        working-directory: src
+        env:
+          MIX_ENV: test
+          TEST_DB_POOL_SIZE: "10"
+        run: mix test
+
+      - name: Read the version
+        id: version
+        if: steps.plan.outputs.build == 'true'
+        working-directory: src
+        run: |
+          version=$(grep -m 1 'version:' mix.exs | sed 's/.*version: "\(.*\)".*/\1/')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.plan.outputs.build == 'true'
+
+      - uses: docker/login-action@v3
+        if: steps.plan.outputs.build == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        if: steps.plan.outputs.build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: src
+          file: src/Dockerfile.docker
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:deploy
+            ${{ env.IMAGE }}:${{ steps.version.outputs.version }}-deploy
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.title=Tymeslot (jacotec deploy)
+            org.opencontainers.image.description=Tymeslot ${{ steps.plan.outputs.tag }} with the branches in branches.txt
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}-deploy
+            ${{ env.FINGERPRINT_LABEL }}=${{ steps.plan.outputs.fingerprint }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

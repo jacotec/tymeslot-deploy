@@ -1,0 +1,10 @@
+# Branches of jacotec/tymeslot merged, in this order, on top of the latest
+# upstream release tag. One branch per line; blank lines and comments are
+# ignored.
+feature/nextcloud-talk-video-integration
+feature/shared-availability-guests
+fix/notify-guests-on-reschedule-and-cancel
+fix/reschedule-approval-emails
+fix/host-email-locale
+fix/cancel-calendar-entry-after-declined-reschedule
+fix/tell-host-when-reschedule-request-expires
