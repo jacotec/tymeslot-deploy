@@ -15,3 +15,5 @@ fix/quick-add-default-slot-near-midnight
 fix/agenda-event-across-midnight
 chore/bump-mint-1.10.1
 fix/rhythm-other-day-test-on-weekend
+fix/quill-submit-button-emoji
+fix/prefill-custom-answers-on-reschedule
