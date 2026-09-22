@@ -1,8 +1,5 @@
 # Branches of jacotec/tymeslot merged, in this order, on top of the latest
 # upstream release tag. One branch per line; blank lines and comments are
 # ignored.
-feature/nextcloud-talk-video-integration
 feature/shared-availability-guests
 feature/multiple-durations
-fix/prefill-custom-answers-on-reschedule
-fix/reschedule-keeps-its-meeting-type
