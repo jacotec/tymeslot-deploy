@@ -3,3 +3,6 @@
 # ignored.
 feature/shared-availability-guests
 feature/multiple-durations
+fix/calendar-update-during-running-update
+fix/calendar-event-labels-untranslated
+fix/cancel-button-says-absagen
