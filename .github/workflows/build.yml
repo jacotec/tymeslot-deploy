@@ -18,6 +18,13 @@ on:
         description: Build even if nothing changed since the published image
         type: boolean
         default: false
+      base:
+        description: >
+          Build on this ref instead of the latest release tag, e.g.
+          upstream/main while waiting for a release that carries fixes
+          already merged there.
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -54,16 +61,25 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE: ${{ inputs.force }}
+          BASE: ${{ inputs.base }}
         run: |
           set -euo pipefail
 
-          tag=$(git ls-remote --tags --refs "$UPSTREAM_URL" 'v*' \
-            | sed 's#.*refs/tags/##' \
-            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-            | sort -V | tail -n 1)
+          if [ -n "${BASE:-}" ]; then
+            # An explicit base: its head is the fingerprint input, so a new
+            # commit on it rebuilds the image the same way a new tag would.
+            tag=$BASE
+            base_sha=$(git ls-remote "$UPSTREAM_URL" "${BASE#upstream/}" | cut -f1)
+          else
+            tag=$(git ls-remote --tags --refs "$UPSTREAM_URL" 'v*' \
+              | sed 's#.*refs/tags/##' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | sort -V | tail -n 1)
+            base_sha=$(git ls-remote "$UPSTREAM_URL" "refs/tags/$tag" | cut -f1)
+          fi
 
           {
-            echo "release $tag $(git ls-remote "$UPSTREAM_URL" "refs/tags/$tag" | cut -f1)"
+            echo "release $tag $base_sha"
             for branch in $(grep -vE '^\s*(#|$)' branches.txt); do
               sha=$(git ls-remote "$FORK_URL" "refs/heads/$branch" | cut -f1)
               if [ -z "$sha" ]; then

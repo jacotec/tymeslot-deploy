@@ -32,6 +32,15 @@ git fetch --quiet --tags upstream
 tag=${RELEASE_TAG:-$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)}
 echo "Release: $tag"
 
+# Normally a release tag. It may also be any other ref — `upstream/main` while
+# waiting for a release that carries fixes already merged there, so the image
+# does not have to choose between them and the branches still open.
+if git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
+  base="refs/tags/$tag"
+else
+  base=$tag
+fi
+
 git config user.name "tymeslot-deploy"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 git config rerere.enabled true
@@ -41,7 +50,7 @@ if [ -d "$here/rr-cache" ]; then
   cp -R "$here/rr-cache/." .git/rr-cache/
 fi
 
-git checkout --quiet --force -B deploy "refs/tags/$tag"
+git checkout --quiet --force -B deploy "$base"
 
 for branch in $branches; do
   echo "Merging $branch ($(git rev-parse --short "origin/$branch"))"
