@@ -7,3 +7,6 @@ fix/calendar-update-during-running-update
 fix/calendar-event-labels-untranslated
 fix/cancel-button-says-absagen
 feature/host-adds-guests
+fix/quick-add-sends-two-invitations
+fix/read-only-calendars-offered-as-targets
+feature/quick-add-guests-message-language
