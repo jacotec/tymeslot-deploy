@@ -10,8 +10,15 @@ name: Build deploy image
 
 on:
   schedule:
-    # 02:43 UTC, off the hour: GitHub's scheduler is most contended at :00.
-    - cron: "43 2 * * *"
+    # 09:43 UTC, off the hour: GitHub's scheduler is most contended at :00.
+    #
+    # Late morning rather than the small hours while the image is built on
+    # upstream/main: a test there books "now, three days out" and reschedules
+    # it a week later, so it lands outside anyone's availability when the run
+    # starts at night and fails for the clock rather than for the code. Move
+    # this back once the base is a release tag again, or once that test stops
+    # depending on the hour it runs at.
+    - cron: "43 9 * * *"
   workflow_dispatch:
     inputs:
       force:
