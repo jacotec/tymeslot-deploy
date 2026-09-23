@@ -6,3 +6,4 @@ feature/multiple-durations
 fix/calendar-update-during-running-update
 fix/calendar-event-labels-untranslated
 fix/cancel-button-says-absagen
+feature/host-adds-guests
