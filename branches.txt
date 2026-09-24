@@ -13,3 +13,4 @@ fix/quick-add-sends-an-unasked-reminder
 feature/quick-add-reminders
 fix/email-spacing
 fix/reschedule-video-test-depends-on-clock
+feature/show-reminders-in-booking-details
