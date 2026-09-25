@@ -10,8 +10,5 @@ feature/quick-add-guests-message-language
 fix/tall-modals-cannot-be-scrolled
 fix/calendar-note-says-who-wrote-it
 fix/quick-add-sends-an-unasked-reminder
-fix/reminder-lead-times-untranslated
 feature/quick-add-reminders
-fix/email-spacing
-fix/reschedule-video-test-depends-on-clock
 feature/show-reminders-in-booking-details

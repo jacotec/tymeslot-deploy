@@ -553,7 +553,6 @@ msgstr "Veuillez remplir tous les champs obligatoires"
 msgid "Please select a date to see available times"
 msgstr "Veuillez sélectionner une date pour voir les horaires"
 
-#: lib/tymeslot_web/themes/quill/scheduling/components/length_component.ex
 #: lib/tymeslot_web/themes/quill/scheduling/components/overview_component.ex
 #, elixir-autogen, elixir-format
 msgid "Please select a meeting duration first"
@@ -878,11 +877,9 @@ msgstr "Ajouter des détails"
 
 #: lib/tymeslot_web/themes/quill/scheduling/components/booking_component.ex
 #: lib/tymeslot_web/themes/quill/scheduling/components/custom_questions_component.ex
-#: lib/tymeslot_web/themes/quill/scheduling/components/length_component.ex
 #: lib/tymeslot_web/themes/quill/scheduling/components/schedule_component.ex
 #: lib/tymeslot_web/themes/rhythm/scheduling/components/booking_component.ex
 #: lib/tymeslot_web/themes/rhythm/scheduling/components/custom_questions_component.ex
-#: lib/tymeslot_web/themes/rhythm/scheduling/components/length_component.ex
 #: lib/tymeslot_web/themes/rhythm/scheduling/components/schedule_component.ex
 #, elixir-autogen, elixir-format
 msgid "back"
@@ -934,10 +931,8 @@ msgid "name"
 msgstr "Nom"
 
 #: lib/tymeslot_web/themes/quill/scheduling/components/custom_questions_component.ex
-#: lib/tymeslot_web/themes/quill/scheduling/components/length_component.ex
 #: lib/tymeslot_web/themes/quill/scheduling/components/overview_component.ex
 #: lib/tymeslot_web/themes/rhythm/scheduling/components/custom_questions_component.ex
-#: lib/tymeslot_web/themes/rhythm/scheduling/components/length_component.ex
 #: lib/tymeslot_web/themes/rhythm/scheduling/components/overview_component.ex
 #: lib/tymeslot_web/themes/rhythm/scheduling/components/schedule_component.ex
 #, elixir-autogen, elixir-format
@@ -1881,39 +1876,6 @@ msgid "This booking wasn't accepted, so it won't be going ahead."
 msgstr "Cette réservation n’a pas été acceptée et n’aura donc pas lieu."
 
 <<<<<<<
-#: lib/tymeslot_web/themes/shared/booking_text.ex
-#, elixir-autogen, elixir-format
-msgid "Additional participants: %{names}"
-msgstr "Autres participants : %{names}"
-
-#: lib/tymeslot_web/live/scheduling/shared_availability_guests.ex
-#, elixir-autogen, elixir-format
-msgid "One of the participants named in this link isn’t available for booking. Please check the link."
-msgstr "L’un des participants indiqués dans ce lien n’est pas disponible à la réservation. Veuillez vérifier le lien."
-
-#: lib/tymeslot_web/live/scheduling/shared_availability_guests.ex
-#, elixir-autogen, elixir-format
-msgid "This meeting type can’t be booked together with other participants."
-msgstr "Ce type de rendez-vous ne peut pas être réservé avec d’autres participants."
-
-#: lib/tymeslot_web/themes/quill/scheduling/components/overview_component.ex
-#: lib/tymeslot_web/themes/rhythm/scheduling/components/overview_component.ex
-#, elixir-autogen, elixir-format
-msgid "This booking link can’t be used"
-msgstr "Ce lien de réservation ne peut pas être utilisé"
-=======
-#: lib/tymeslot_web/themes/shared/localization_helpers.ex
-#, elixir-autogen, elixir-format
-msgid "%{min}–%{max} min"
-msgstr "%{min}–%{max} min"
-
-#: lib/tymeslot_web/themes/quill/scheduling/components/length_component.ex
-#: lib/tymeslot_web/themes/rhythm/scheduling/components/length_component.ex
-#, elixir-autogen, elixir-format
-msgid "How long should the meeting be?"
-msgstr "Combien de temps doit durer la réunion ?"
->>>>>>>
-
 #: lib/tymeslot_web/controllers/guest_rsvp_html.ex
 #, elixir-autogen, elixir-format
 msgid "The meeting has already taken place, or it was cancelled or not confirmed. Please contact the meeting host."
@@ -1974,3 +1936,25 @@ msgstr "Quel service vidéo ?"
 #, elixir-autogen, elixir-format
 msgid "Your phone number"
 msgstr "Votre numéro de téléphone"
+=======
+#: lib/tymeslot_web/themes/shared/booking_text.ex
+#, elixir-autogen, elixir-format
+msgid "Additional participants: %{names}"
+msgstr "Autres participants : %{names}"
+
+#: lib/tymeslot_web/live/scheduling/shared_availability_guests.ex
+#, elixir-autogen, elixir-format
+msgid "One of the participants named in this link isn’t available for booking. Please check the link."
+msgstr "L’un des participants indiqués dans ce lien n’est pas disponible à la réservation. Veuillez vérifier le lien."
+
+#: lib/tymeslot_web/live/scheduling/shared_availability_guests.ex
+#, elixir-autogen, elixir-format
+msgid "This meeting type can’t be booked together with other participants."
+msgstr "Ce type de rendez-vous ne peut pas être réservé avec d’autres participants."
+
+#: lib/tymeslot_web/themes/quill/scheduling/components/overview_component.ex
+#: lib/tymeslot_web/themes/rhythm/scheduling/components/overview_component.ex
+#, elixir-autogen, elixir-format
+msgid "This booking link can’t be used"
+msgstr "Ce lien de réservation ne peut pas être utilisé"
+>>>>>>>
