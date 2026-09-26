@@ -9,3 +9,4 @@ fix/calendar-note-says-who-wrote-it
 fix/quick-add-sends-an-unasked-reminder
 feature/quick-add-reminders
 feature/show-reminders-in-booking-details
+fix/caldav-timeout-alerts-every-cycle
