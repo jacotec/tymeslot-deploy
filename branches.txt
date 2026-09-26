@@ -4,10 +4,7 @@
 feature/shared-availability-guests
 feature/multiple-durations
 feature/host-adds-guests
-fix/quick-add-sends-two-invitations
-fix/read-only-calendars-offered-as-targets
 feature/quick-add-guests-message-language
-fix/tall-modals-cannot-be-scrolled
 fix/calendar-note-says-who-wrote-it
 fix/quick-add-sends-an-unasked-reminder
 feature/quick-add-reminders
