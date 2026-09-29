@@ -3,8 +3,4 @@
 # ignored.
 feature/shared-availability-guests
 feature/multiple-durations
-feature/host-adds-guests
-feature/quick-add-guests-message-language
-fix/quick-add-sends-an-unasked-reminder
 feature/quick-add-reminders
-feature/show-reminders-in-booking-details
