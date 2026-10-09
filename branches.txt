@@ -4,3 +4,4 @@
 feature/shared-availability-guests
 feature/multiple-durations
 feature/quick-add-reminders
+fix/flash-dismiss-closes-open-dialogs
