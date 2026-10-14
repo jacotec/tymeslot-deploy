@@ -8,3 +8,4 @@ feature/quick-add-group-events
 feature/registration-closed-participant-list
 fix/group-guest-seats
 feature/group-guest-limit
+fix/poll-slot-health-all-day-events
