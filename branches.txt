@@ -3,3 +3,6 @@
 # ignored.
 feature/shared-availability-guests
 feature/multiple-durations
+feature/fixed-date-group-sessions
+feature/quick-add-group-events
+feature/registration-closed-participant-list
