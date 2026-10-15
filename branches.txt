@@ -12,3 +12,4 @@ fix/poll-slot-health-all-day-events
 feature/poll-email-confirmation
 feature/poll-invitations
 feature/poll-management
+fix/poll-meeting-managed-by-host
