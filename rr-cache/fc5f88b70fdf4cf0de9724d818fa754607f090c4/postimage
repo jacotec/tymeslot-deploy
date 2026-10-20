@@ -1,0 +1,229 @@
+defmodule Tymeslot.Polls.Confirm do
+  @moduledoc """
+  Confirms a poll by minting a real meeting from a chosen candidate slot.
+
+  Confirmation runs the winning slot through the regular ad-hoc booking path
+  (`Bookings.CreateAdHoc`), so the resulting meeting gets the same calendar
+  sync, notifications and optional video provisioning as any other booking. On
+  success the poll transitions to `:confirmed` and subscribers are notified.
+
+  The meeting is managed by the host (`MeetingSchema.managed_by_host?/1`): it
+  has no booker. Every participant is invited as a guest and answers yes or no
+  like one, and only the host can move or cancel it. The first participant
+  available for the slot fills the meeting's attendee fields, which a calendar
+  entry needs, but is not sent the booking emails with their reschedule and
+  cancel links.
+
+  A host may take part in their own poll, to give their own answers next to
+  everyone else's. That entry is left out of the meeting: the host is its
+  organiser, so they are neither its attendee nor one of its guests.
+  """
+
+  alias Tymeslot.Availability
+  alias Tymeslot.Availability.TimeOff
+  alias Tymeslot.Bookings.Activation
+  alias Tymeslot.Bookings.CreateAdHoc
+  alias Tymeslot.Emails.EmailScheduler
+  alias Tymeslot.Integrations.Calendar.Primary
+  alias Tymeslot.Meetings.MeetingSchema
+  alias Tymeslot.MeetingTypes
+  alias Tymeslot.Polls
+  alias Tymeslot.Polls.{PollParticipantSchema, PollQueries, PollSchema, PollTimeSlotQueries}
+  alias Tymeslot.Repo
+
+  @available_responses [:yes, :if_need_be]
+
+  @type reason ::
+          :not_found
+          | :not_open
+          | :invalid_slot
+          | :slot_in_past
+          | :no_participants
+          | :slot_taken
+          | :time_off
+          | Ecto.Changeset.t()
+          | String.t()
+
+  @doc """
+  Confirms `poll_id` on `slot_id` for its owner `user_id`.
+
+  Returns `{:ok, meeting}` on success, or `{:error, reason}` when the poll is
+  missing, not open, the slot is invalid or past, the slot falls inside the
+  host's time off (`:time_off`), there are no participants besides the host
+  (`:no_participants`), the slot is already
+  taken for the host, or the underlying booking fails.
+
+  Time off is checked here rather than in `Bookings.CreateAdHoc`, which also
+  serves the calendar grid and deliberately skips every schedule rule. A poll
+  is answered days after the host proposed its times, so a holiday entered in
+  between must still stop it being confirmed into.
+  """
+  @spec confirm(Ecto.UUID.t(), Ecto.UUID.t(), integer()) ::
+          {:ok, Tymeslot.Meetings.MeetingSchema.t()} | {:error, reason()}
+  def confirm(poll_id, slot_id, user_id) do
+    case Repo.transaction(fn -> claim_and_mint(poll_id, slot_id, user_id) end) do
+      {:ok, {meeting, pending}} ->
+        # All three belong after the commit: the integration fan-out must not
+        # be able to roll the confirmation back, the cache must not be rebuilt
+        # from a meeting that is still uncommitted, and subscribers must not be
+        # told about a confirmation that could still roll back.
+        :ok = Activation.after_commit(pending)
+        Availability.changed(user_id)
+        Polls.broadcast_update(poll_id)
+        {:ok, meeting}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # Everything that decides whether the poll may be confirmed, and everything
+  # that acts on that decision, commits as one transaction opened by a locking
+  # read. The meeting and the status flip therefore land together or not at
+  # all, so no crash, timeout or restart can strand a minted meeting against a
+  # poll that still reads as open.
+  defp claim_and_mint(poll_id, slot_id, user_id) do
+    with {:ok, poll} <- lock_poll(poll_id, user_id),
+         :ok <- ensure_open(poll),
+         {:ok, slot} <- resolve_slot(poll, slot_id),
+         :ok <- ensure_outside_time_off(poll, slot),
+         invitees = invitees(poll),
+         {:ok, primary} <- resolve_primary(invitees, slot),
+         {:ok, meeting, pending} <- create_meeting(poll, slot, primary, invitees),
+         {:ok, _poll} <-
+           PollQueries.update(PollSchema.confirm_changeset(poll, confirm_attrs(meeting))) do
+      EmailScheduler.cancel_poll_deadline_jobs(poll.id)
+      {meeting, pending}
+    else
+      # Nothing here may query: a failing booking has already rolled back the
+      # transaction at its own level, which leaves the connection able to do
+      # nothing but roll back.
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  defp lock_poll(poll_id, user_id) do
+    case PollQueries.lock_for_user(poll_id, user_id) do
+      nil -> {:error, :not_found}
+      poll -> {:ok, poll}
+    end
+  end
+
+  defp confirm_attrs(meeting) do
+    %{
+      status: :confirmed,
+      confirmed_meeting_id: meeting.id,
+      confirmed_at: DateTime.utc_now(:second)
+    }
+  end
+
+  defp ensure_open(%PollSchema{status: :open}), do: :ok
+  defp ensure_open(_poll), do: {:error, :not_open}
+
+  defp resolve_slot(poll, slot_id) do
+    case PollTimeSlotQueries.get_for_poll(slot_id, poll.id) do
+      nil -> {:error, :invalid_slot}
+      slot -> ensure_future(slot)
+    end
+  end
+
+  defp ensure_future(slot) do
+    if DateTime.compare(slot.start_time, DateTime.utc_now()) == :gt do
+      {:ok, slot}
+    else
+      {:error, :slot_in_past}
+    end
+  end
+
+  defp ensure_outside_time_off(poll, slot) do
+    case TimeOff.clashing_ranges(poll.user_id, [{slot.start_time, slot.end_time}]) do
+      [] -> :ok
+      [_clash] -> {:error, :time_off}
+    end
+  end
+
+  # The participants the meeting is for: everyone but the host's own entry,
+  # matched by address as `Bookings.CreateAdHoc` matches a self-booking.
+  defp invitees(%PollSchema{participants: participants} = poll) do
+    host_email = normalise_email(Repo.preload(poll, :user).user.email)
+    Enum.reject(participants, &(normalise_email(&1.email) == host_email))
+  end
+
+  defp normalise_email(email) when is_binary(email),
+    do: email |> String.trim() |> String.downcase()
+
+  defp normalise_email(_email), do: nil
+
+  defp resolve_primary([], _slot), do: {:error, :no_participants}
+  defp resolve_primary(invitees, slot), do: {:ok, pick_primary(invitees, slot.id)}
+
+  defp pick_primary(participants, slot_id) do
+    Enum.find(participants, List.first(participants), &available_for?(&1, slot_id))
+  end
+
+  defp available_for?(participant, slot_id) do
+    Enum.any?(participant.votes, fn vote ->
+      vote.poll_time_slot_id == slot_id and vote.response in @available_responses
+    end)
+  end
+
+  # Everyone, the primary included: they are a guest like the rest.
+  defp guest_emails(participants) do
+    participants
+    |> Enum.map(&String.downcase(&1.email))
+    |> Enum.uniq()
+  end
+
+  defp integration_ids(%PollSchema{meeting_type_id: nil} = poll) do
+    {primary_calendar_id(poll.user_id), nil}
+  end
+
+  defp integration_ids(%PollSchema{meeting_type_id: meeting_type_id} = poll) do
+    case MeetingTypes.get_meeting_type(meeting_type_id, poll.user_id) do
+      nil -> {primary_calendar_id(poll.user_id), nil}
+      meeting_type -> {meeting_type.calendar_integration_id, meeting_type.video_integration_id}
+    end
+  end
+
+  defp primary_calendar_id(user_id) do
+    case Primary.get_primary_calendar_integration(user_id) do
+      {:ok, integration} -> integration.id
+      {:error, _reason} -> nil
+    end
+  end
+
+  defp create_meeting(poll, slot, primary, invitees) do
+    {calendar_integration_id, video_integration_id} = integration_ids(poll)
+
+    %{
+      title: poll.title,
+      start_time: slot.start_time,
+      end_time: slot.end_time,
+      organizer_user_id: poll.user_id,
+      attendee_name: PollParticipantSchema.display_name(primary),
+      attendee_email: primary.email,
+      attendee_timezone: primary.timezone || poll.timezone,
+      calendar_integration_id: calendar_integration_id,
+      video_integration_id: video_integration_id,
+      guest_emails: guest_emails(invitees),
+      managed_by_host: true,
+      # What the host wrote to the participants while they voted is still
+      # their note to them once the meeting is set.
+      organizer_note: organizer_note(poll.description)
+    }
+    |> CreateAdHoc.execute_deferred()
+    |> map_booking_result()
+  end
+
+  # Polls created before their description was capped can hold more than a
+  # note may. Cut it to fit rather than let an over-long description stop the
+  # host confirming the poll at all.
+  defp organizer_note(description) when is_binary(description),
+    do: description |> String.trim() |> String.slice(0, MeetingSchema.organizer_note_max_length())
+
+  defp organizer_note(nil), do: nil
+
+  defp map_booking_result({:ok, meeting, pending}), do: {:ok, meeting, pending}
+  defp map_booking_result({:error, :time_conflict}), do: {:error, :slot_taken}
+  defp map_booking_result({:error, reason}), do: {:error, reason}
+end

@@ -12,3 +12,5 @@ feature/poll-invitations
 feature/poll-management
 fix/poll-meeting-managed-by-host
 feature/extra-availability
+fix/poll-confirm-host-as-voter
+fix/guest-reminder-invited-by-host
