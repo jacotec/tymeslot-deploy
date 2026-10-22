@@ -6,7 +6,6 @@ feature/multiple-durations
 feature/fixed-date-group-sessions
 feature/quick-add-group-events
 feature/registration-closed-participant-list
-feature/group-guest-limit
 feature/poll-email-confirmation
 feature/poll-invitations
 feature/poll-management

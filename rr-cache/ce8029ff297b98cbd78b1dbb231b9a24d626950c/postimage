@@ -1,0 +1,613 @@
+defmodule Tymeslot.MeetingTypes do
+  @moduledoc """
+  Context for managing meeting types.
+  """
+  alias Ecto.UUID
+  alias Tymeslot.Availability
+  alias Tymeslot.BookingPage.Publication
+  alias Tymeslot.Clock
+  alias Tymeslot.Integrations.Calendar.CalendarEntry
+  alias Tymeslot.Integrations.Video
+  alias Tymeslot.Meetings
+  alias Tymeslot.MeetingTypes.BookingCalendar
+  alias Tymeslot.MeetingTypes.Duration
+  alias Tymeslot.MeetingTypes.FixedDates
+  alias Tymeslot.MeetingTypes.FormMapper
+  alias Tymeslot.MeetingTypes.FormValidation
+  alias Tymeslot.MeetingTypes.GroupAccess
+  alias Tymeslot.MeetingTypes.LocationOption
+  alias Tymeslot.MeetingTypes.LocationSelection
+  alias Tymeslot.MeetingTypes.MeetingTypeQueries
+  alias Tymeslot.MeetingTypes.MeetingTypeSchema
+  alias Tymeslot.MeetingTypes.PaymentAccess
+  alias Tymeslot.MeetingTypes.ReminderValidation
+  alias Tymeslot.MeetingTypes.Slugs
+  alias Tymeslot.Repo
+  alias Tymeslot.Utils.UriUtils
+  alias Tymeslot.Venues
+
+  @doc """
+  The locations this meeting type offers, in the host's order.
+
+  See `Tymeslot.MeetingTypes.LocationSelection` for what a meeting type
+  with no stored list falls back to.
+  """
+  @spec location_options(map() | nil) :: [LocationOption.t()]
+  defdelegate location_options(meeting_type), to: LocationSelection, as: :options
+
+  @doc """
+  Whether `meeting_type` lets several people book the same slot. Anything
+  that is not a stored meeting type (`nil`, a demo's plain-map type) is not.
+  """
+  @spec group_type?(MeetingTypeSchema.t() | map() | nil) :: boolean()
+  defdelegate group_type?(meeting_type), to: MeetingTypeSchema, as: :group?
+
+  @typedoc """
+  What a booker submitted about where to meet. Every key is optional, and
+  each is honoured only where the host's own meeting type offers it:
+
+    * `:option_id`, the location option chosen
+    * `:phone`, the booker's number, for a phone option that asks for it
+    * `:video_integration_id`, the provider picked within a video option
+    * `:venue_id`, the venue picked within an in-person option
+    * `:current_venue_id`, on a reschedule the meeting's own venue, kept
+      when `:venue_id` is not one the option offers
+  """
+  @type location_choice :: %{
+          optional(:option_id) => String.t() | nil,
+          optional(:phone) => String.t() | nil,
+          optional(:video_integration_id) => integer() | String.t() | nil,
+          optional(:venue_id) => integer() | String.t() | nil,
+          optional(:current_venue_id) => integer() | nil
+        }
+
+  @doc """
+  Resolves a booker's location choice into the meeting fields that follow
+  from it.
+
+  A video location can outlive an integration it names: the host
+  disconnected it, and the location keeps its id until the host next edits
+  the meeting type. Such an id is resolved as if the location did not list
+  it, so the meeting lands on the location's next listed integration, or on
+  none, and is booked without a room, just as a booking on a deactivated
+  integration is. A deactivated integration still resolves: the room job
+  checks it when it runs, and it may be switched back on by then.
+
+  An in-person location can likewise list a venue that has since gone. Only
+  venues that still exist are offered (`location_venue_choices/1`), so the
+  meeting lands on the one the booker picked while it is offered, otherwise
+  on the location's first remaining venue, or on none, as a booking whose
+  address is arranged afterwards.
+  """
+  @spec resolve_location(map() | nil, location_choice()) :: LocationSelection.resolution()
+  def resolve_location(meeting_type, choice) when is_map(choice) do
+    meeting_type = without_removed_video_integrations(meeting_type)
+
+    resolution =
+      LocationSelection.resolve(
+        meeting_type,
+        choice[:option_id],
+        choice[:phone],
+        choice[:video_integration_id]
+      )
+
+    venues =
+      meeting_type
+      |> location_venue_choices()
+      |> Map.get(resolution.location_option_id, [])
+
+    LocationSelection.place_at_venue(resolution, venues, [
+      choice[:venue_id],
+      choice[:current_venue_id]
+    ])
+  end
+
+  # Only a stored list can name a removed integration: the option a meeting
+  # type without one derives comes from its `video_integration_id`, which the
+  # foreign key nils when the integration goes.
+  defp without_removed_video_integrations(
+         %{user_id: user_id, locations: [_first | _rest] = locations} = meeting_type
+       )
+       when is_integer(user_id) do
+    if Enum.any?(locations, &(&1.video_integration_ids != [])) do
+      held = user_id |> Video.list_integrations() |> MapSet.new(& &1.id)
+
+      locations =
+        Enum.map(locations, fn location ->
+          %{
+            location
+            | video_integration_ids: Enum.filter(location.video_integration_ids, &(&1 in held))
+          }
+        end)
+
+      %{meeting_type | locations: locations}
+    else
+      meeting_type
+    end
+  end
+
+  defp without_removed_video_integrations(meeting_type), do: meeting_type
+
+  @doc """
+  The video providers the booker can pick between, per video location:
+  a map from option id to the host's active integrations that option
+  lists, in the host's order.
+
+  An integration the host has since deactivated or deleted is left out, so
+  the booker is never offered a provider that cannot create a room. A
+  location left with nothing active is absent from the map.
+  """
+  @spec location_video_choices(map() | nil) :: %{
+          String.t() => [%{id: integer(), name: String.t(), provider: String.t()}]
+        }
+  def location_video_choices(%{user_id: user_id} = meeting_type) when is_integer(user_id) do
+    video_options =
+      meeting_type |> LocationSelection.options() |> Enum.filter(&(&1.kind == "video"))
+
+    if video_options == [] do
+      %{}
+    else
+      active =
+        user_id
+        |> Video.list_integrations()
+        |> Enum.filter(& &1.is_active)
+        |> Map.new(&{&1.id, %{id: &1.id, name: &1.name, provider: &1.provider}})
+
+      for option <- video_options,
+          choices =
+            option.video_integration_ids |> Enum.map(&active[&1]) |> Enum.reject(&is_nil/1),
+          choices != [],
+          into: %{},
+          do: {option.id, choices}
+    end
+  end
+
+  def location_video_choices(_meeting_type), do: %{}
+
+  @doc """
+  The venues the booker can pick between, per in-person location: a map
+  from option id to the owner's venues that option lists, as
+  `Tymeslot.Venues.choice/0` maps, in the organiser's library order (the
+  order dragged on the Locations page), so reordering the library reorders
+  every picker. The first is the one the picker opens on.
+
+  A venue that no longer exists, or is not the owner's, is left out, and a
+  location left with none is absent from the map: its address is arranged
+  after booking. Loaded once when the booking page mounts, next to
+  `location_video_choices/1`, so rendering runs no query.
+  """
+  @spec location_venue_choices(map() | nil) :: %{String.t() => [Venues.choice()]}
+  def location_venue_choices(%{user_id: user_id} = meeting_type) when is_integer(user_id) do
+    in_person =
+      meeting_type
+      |> LocationSelection.options()
+      |> Enum.filter(&(&1.kind == "in_person" and &1.venue_ids != []))
+
+    if in_person == [] do
+      %{}
+    else
+      library = user_id |> Venues.list_venues() |> Enum.map(&Venues.to_choice/1)
+
+      for option <- in_person,
+          choices = Enum.filter(library, &(&1.id in option.venue_ids)),
+          choices != [],
+          into: %{},
+          do: {option.id, choices}
+    end
+  end
+
+  def location_venue_choices(_meeting_type), do: %{}
+
+  @doc """
+  Gets all active meeting types for a user. A pure read: a host may have
+  none (the defaults are seeded once, with the profile; see
+  `seed_default_meeting_types/2`).
+  """
+  @spec get_active_meeting_types(integer()) :: [Ecto.Schema.t()]
+  def get_active_meeting_types(user_id),
+    do: MeetingTypeQueries.list_active_meeting_types(user_id)
+
+  @doc """
+  Gets all meeting types for a user (active and inactive). A pure read, like
+  `get_active_meeting_types/1`.
+  """
+  @spec get_all_meeting_types(integer()) :: [Ecto.Schema.t()]
+  def get_all_meeting_types(user_id), do: MeetingTypeQueries.list_all_meeting_types(user_id)
+
+  @doc """
+  Gets the publicly listed meeting types for a user (active and not private).
+  This feeds the public booking overview; private types are excluded and
+  reachable only by their direct link.
+
+  A pure read, like the two owner-facing listings above: a host with no
+  meeting types shows the booking page's empty state.
+
+  A paused group type (`Tymeslot.MeetingTypes.GroupAccess`) is left out, as an
+  inactive one is: it takes no new bookings, so the page must not offer it. So
+  is a fixed-date type with no session left to sign up for
+  (`Tymeslot.MeetingTypes.FixedDates.reject_unbookable/1`), and so is a paid
+  type while its host is not accepting payments
+  (`Tymeslot.MeetingTypes.PaymentAccess`), since its booking could never be
+  submitted.
+  """
+  @spec get_public_meeting_types(integer()) :: [Ecto.Schema.t()]
+  def get_public_meeting_types(user_id) do
+    user_id
+    |> MeetingTypeQueries.list_public_meeting_types()
+    |> GroupAccess.reject_paused()
+    |> FixedDates.reject_unbookable()
+    |> PaymentAccess.reject_unsellable()
+  end
+
+  @doc """
+  Gets a meeting type by ID and user ID.
+  """
+  @spec get_meeting_type(integer(), integer()) :: Ecto.Schema.t() | nil
+  def get_meeting_type(id, user_id) do
+    MeetingTypeQueries.get_meeting_type(id, user_id)
+  end
+
+  @doc """
+  Returns true if the user has at least one active meeting type.
+  """
+  @spec has_active_meeting_types?(integer()) :: boolean()
+  def has_active_meeting_types?(user_id) do
+    MeetingTypeQueries.has_active_meeting_types?(user_id)
+  end
+
+  @doc """
+  Creates a new meeting type.
+
+  `opts` are forwarded to the changeset for payment-validation context.
+  """
+  @spec create_meeting_type(map(), keyword()) ::
+          {:ok, Ecto.Schema.t()} | {:error, Ecto.Changeset.t() | :not_found}
+  def create_meeting_type(attrs, opts \\ []) do
+    result =
+      Repo.transaction(fn ->
+        changeset = MeetingTypeSchema.changeset(%MeetingTypeSchema{}, attrs, opts)
+
+        with {:ok, promotion} <- BookingCalendar.promote(changeset),
+             {:ok, meeting_type} <- MeetingTypeQueries.create_meeting_type(attrs, opts) do
+          {meeting_type, promotion}
+        else
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end)
+
+    with {:ok, {meeting_type, promotion}} <- result do
+      if promotion == :promoted, do: invalidate_after_commit(meeting_type.user_id)
+      Publication.maybe_publish(meeting_type.user_id)
+      {:ok, meeting_type}
+    end
+  end
+
+  @doc """
+  Updates a meeting type.
+
+  `opts` are forwarded to the changeset for payment-validation context.
+  """
+  @spec update_meeting_type(Ecto.Schema.t(), map(), keyword()) ::
+          {:ok, Ecto.Schema.t()} | {:error, Ecto.Changeset.t() | :not_found}
+  def update_meeting_type(meeting_type, attrs, opts \\ []) do
+    case Repo.transaction(fn -> do_update_meeting_type(meeting_type, attrs, opts) end) do
+      {:ok, updated} ->
+        Publication.maybe_publish(updated.user_id)
+        maybe_broadcast_seat_change(meeting_type, updated)
+        # Offered slots are cached per meeting type, and an edit can change which
+        # availability schedule the type resolves to, so the cached answer must go.
+        invalidate_after_commit(updated.user_id)
+        {:ok, updated}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp do_update_meeting_type(meeting_type, attrs, opts) do
+    changeset = MeetingTypeSchema.changeset(meeting_type, attrs, opts)
+
+    with {:ok, _promotion} <- BookingCalendar.promote(changeset),
+         {:ok, updated} <- MeetingTypeQueries.update_meeting_type(meeting_type, attrs, opts) do
+      sync_group_capacity(meeting_type, updated)
+      updated
+    else
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  # Capacity follows the type: a new seat limit above one applies to the
+  # type's future group meetings, in the same transaction as the type itself.
+  # A limit below the seats already taken on a meeting leaves that meeting
+  # exactly full rather than over capacity, and nobody is cancelled. Solo bookings are never touched, so a
+  # one-to-one booking stays private when its type becomes a group type.
+  # Turning group bookings off (a limit of one) leaves existing group
+  # meetings' capacity alone; they keep their seats but take no new joins,
+  # because joins and availability check the type as well.
+  defp sync_group_capacity(%{max_participants: before}, %{max_participants: now} = updated)
+       when now > 1 and before != now do
+    Meetings.set_future_group_capacity(updated.id, now, Clock.utc_now())
+  end
+
+  defp sync_group_capacity(_before, _updated), do: 0
+
+  defp maybe_broadcast_seat_change(%{max_participants: same}, %{max_participants: same}), do: :ok
+
+  defp maybe_broadcast_seat_change(_before, updated),
+    do: Meetings.broadcast_seat_change(updated.id)
+
+  @doc """
+  Toggles the active status of a meeting type without validating video integration.
+  """
+  @spec toggle_meeting_type_status(Ecto.Schema.t(), map()) ::
+          {:ok, Ecto.Schema.t()} | {:error, Ecto.Changeset.t()}
+  def toggle_meeting_type_status(meeting_type, attrs) do
+    with {:ok, updated} <- MeetingTypeQueries.toggle_meeting_type_status(meeting_type, attrs) do
+      Publication.maybe_publish(updated.user_id)
+      {:ok, updated}
+    end
+  end
+
+  @doc """
+  Deletes a meeting type.
+  """
+  @spec delete_meeting_type(Ecto.Schema.t()) ::
+          {:ok, Ecto.Schema.t()} | {:error, Ecto.Changeset.t()}
+  def delete_meeting_type(meeting_type) do
+    MeetingTypeQueries.delete_meeting_type(meeting_type)
+  end
+
+  @doc """
+  Sets whether a meeting type is private. A private type is excluded from the
+  organiser's public booking page but stays reachable by its direct link.
+  """
+  @spec set_private(Ecto.Schema.t(), boolean()) ::
+          {:ok, Ecto.Schema.t()} | {:error, Ecto.Changeset.t()}
+  def set_private(meeting_type, is_private) when is_boolean(is_private) do
+    MeetingTypeQueries.set_visibility(meeting_type, %{is_private: is_private})
+  end
+
+  @doc """
+  Reorders meeting types for a user.
+  """
+  @spec reorder_meeting_types(integer(), [integer()]) :: {:ok, any()} | {:error, any()}
+  def reorder_meeting_types(user_id, meeting_type_ids) when is_list(meeting_type_ids) do
+    MeetingTypeQueries.reorder_meeting_types(user_id, meeting_type_ids)
+  end
+
+  @typedoc """
+  The health of a meeting type's stored booking target, as of the last
+  calendar list refresh.
+  """
+  @type target_calendar_status :: :ok | :read_only | :missing
+
+  @doc """
+  Reports whether the calendar a meeting type books into can still take a
+  booking.
+
+  A meeting type may override where its bookings land
+  (`calendar_integration_id` plus `target_calendar_id`), and the override is
+  chosen once and then used for every booking of that type. The provider can
+  withdraw write access at any point afterwards: a shared Google calendar
+  downgraded to "see all event details", a CalDAV collection made read-only,
+  a calendar deleted outright. Saving the meeting type again would be
+  rejected (`Tymeslot.MeetingTypes.FormValidation`), but nothing forces the
+  host to save it again, so the dashboard uses this to say so unprompted.
+
+  Returns:
+
+    * `:ok` — the target is still writable, or there is nothing to check:
+      no override, or an integration whose `calendar_list` has never been
+      populated, which `FormValidation` likewise treats as unverifiable
+    * `:read_only` — the calendar is still on the account but the host can no
+      longer write to it
+    * `:missing` — the calendar is gone from the account altogether
+
+  The answer is only as fresh as the last calendar list refresh, so it is a
+  warning for the host, never a booking-time gate: see
+  `Tymeslot.Integrations.Calendar.Runtime.BookingIntegrationResolver`.
+  """
+  @spec target_calendar_status(MeetingTypeSchema.t() | map()) :: target_calendar_status()
+  def target_calendar_status(%{calendar_integration: %{calendar_list: calendar_list}} = type),
+    do: target_calendar_status(calendar_list, type.target_calendar_id)
+
+  def target_calendar_status(_meeting_type), do: :ok
+
+  @doc """
+  The same check against a raw calendar list and target id, for callers
+  holding the two apart from a persisted meeting type (the meeting type
+  editor, whose selection changes before anything is saved).
+
+  Ids are compared with `Tymeslot.Utils.UriUtils.uri_safe_match?/2`, as
+  `FormValidation` does: CalDAV ids are URLs whose percent-encoding varies
+  between listings, and `==` would report healthy calendars as `:missing`.
+  """
+  @spec target_calendar_status([CalendarEntry.t()] | nil, String.t() | nil) ::
+          target_calendar_status()
+  def target_calendar_status([_entry | _rest] = calendar_list, target_calendar_id)
+      when is_binary(target_calendar_id) and target_calendar_id != "" do
+    case Enum.find(calendar_list, &UriUtils.uri_safe_match?(&1.id, target_calendar_id)) do
+      nil -> :missing
+      %{read_only: true} -> :read_only
+      _writable -> :ok
+    end
+  end
+
+  def target_calendar_status(_calendar_list, _target_calendar_id), do: :ok
+
+  # Slug resolution and custom-slug management live in the focused sibling
+  # module Tymeslot.MeetingTypes.Slugs; these delegations keep the context's
+  # public API stable.
+  defdelegate find_by_slug(user_id, slug), to: Slugs
+  defdelegate effective_slug(meeting_type), to: Slugs
+  defdelegate generate_random_slug(user_id), to: Slugs
+  defdelegate update_slug(meeting_type, slug), to: Slugs
+
+  # Which meeting types offer a saved venue, asked by `Tymeslot.Venues` for
+  # the Locations page, and the rewrite that takes a deleted venue off them.
+  defdelegate list_using_venue(user_id, venue_id), to: MeetingTypeQueries
+  defdelegate venue_usage_counts(user_id), to: MeetingTypeQueries
+  defdelegate remove_venue_from_locations(user_id, venue_id), to: MeetingTypeQueries
+
+  # Which of `user_ids` have at least one meeting type, active or not.
+  defdelegate user_ids_with_meeting_type(user_ids), to: MeetingTypeQueries, as: :user_ids_with_any
+
+  @doc """
+  The owner's meeting types, by name, that deleting `venue_id` would leave
+  with an in-person location listing no venue: those with a location whose
+  only venue it is. Such a location then means "the address is arranged
+  after booking", which the Locations page warns about before a delete.
+  """
+  @spec left_without_venue(integer(), integer()) :: [MeetingTypeSchema.t()]
+  def left_without_venue(user_id, venue_id) do
+    user_id
+    |> list_using_venue(venue_id)
+    |> Enum.filter(&MeetingTypeSchema.left_without_venue?(&1, venue_id))
+  end
+
+  @doc """
+  Of `left_without_venue/2`, the group types. A group type's address is
+  fixed in advance (`Tymeslot.MeetingTypes.GroupLocationRule`), so it can
+  never be left to be arranged after booking: these keep the venue from
+  being deleted until they name another one.
+  """
+  @spec group_types_left_without_venue(integer(), integer()) :: [MeetingTypeSchema.t()]
+  def group_types_left_without_venue(user_id, venue_id) do
+    user_id
+    |> left_without_venue(venue_id)
+    |> Enum.filter(&MeetingTypeSchema.group?/1)
+  end
+
+  # Duration parsing, normalisation, and booking-flow validation live in the
+  # focused sibling module Tymeslot.MeetingTypes.Duration; these delegations
+  # keep the context's public API stable.
+  defdelegate normalize_duration_slug(duration), to: Duration
+  defdelegate find_by_duration_string(user_id, slug), to: Duration
+  defdelegate validate_duration_selection(duration, available_types), to: Duration
+
+  @doc """
+  The maximum number of reminders one meeting type may carry.
+
+  The rule itself lives in `Tymeslot.MeetingTypes.ReminderValidation`; it is
+  exposed here so callers outside the domain, the form UI in particular, offer
+  exactly the number the save path enforces.
+  """
+  defdelegate max_reminders(), to: ReminderValidation
+
+  # Once the write commits, never inside a caller's transaction, where a read
+  # in between would cache the old answer again.
+  defp invalidate_after_commit(user_id) do
+    unless MeetingTypeQueries.in_transaction?(),
+      do: Availability.changed(user_id)
+  end
+
+  @doc """
+  Creates a meeting type from form parameters with validation.
+  """
+  @spec create_meeting_type_from_form(integer(), map(), map()) ::
+          {:ok, Ecto.Schema.t()} | {:error, atom() | Ecto.Changeset.t()}
+  def create_meeting_type_from_form(user_id, form_params, ui_state) do
+    payment_opts = FormMapper.payment_opts(user_id)
+
+    with {:ok, attrs} <- FormMapper.build_attrs(form_params, ui_state, payment_opts[:currency]),
+         :ok <- FormValidation.check(user_id, attrs) do
+      create_meeting_type(Map.put(attrs, :user_id, user_id), payment_opts)
+    end
+  end
+
+  @doc """
+  Updates a meeting type from form parameters with validation.
+  """
+  @spec update_meeting_type_from_form(Ecto.Schema.t(), map(), map()) ::
+          {:ok, Ecto.Schema.t()} | {:error, atom() | Ecto.Changeset.t()}
+  def update_meeting_type_from_form(meeting_type, form_params, ui_state) do
+    user_id = meeting_type.user_id
+
+    payment_opts = FormMapper.payment_opts(user_id)
+
+    with {:ok, attrs} <-
+           FormMapper.build_attrs(form_params, ui_state, payment_opts[:currency]),
+         :ok <- FormValidation.check(user_id, attrs, meeting_type.max_participants || 1) do
+      update_meeting_type(meeting_type, attrs, payment_opts)
+    end
+  end
+
+  @doc """
+  Seeds the two default meeting types for a new user, once, as the profile is
+  created (`Tymeslot.Profiles.create_profile/1` and the OAuth sign-up, which
+  passes its transaction's `repo`). A host who later deletes them keeps none:
+  nothing seeds them again.
+
+  A new account has no calendar and no username yet, so the defaults carry
+  no booking calendar and there is no booking page to publish. A seed that
+  meets types already there (a retried sign-up) inserts nothing.
+  """
+  @spec seed_default_meeting_types(integer(), Ecto.Repo.t()) :: :ok
+  def seed_default_meeting_types(user_id, repo \\ Repo) when is_integer(user_id) do
+    now = DateTime.utc_now(:second)
+
+    user_id
+    |> default_meeting_type_templates(nil, nil, now)
+    |> MeetingTypeQueries.insert_defaults(repo)
+
+    :ok
+  end
+
+  # Private functions
+
+  defp default_meeting_type_templates(
+         user_id,
+         calendar_integration_id,
+         target_calendar_id,
+         now
+       ) do
+    [
+      %{
+        user_id: user_id,
+        name: "15 Minutes",
+        description: "Quick chat or brief consultation",
+        duration_minutes: 15,
+        icon: "hero-bolt",
+        sort_order: 0,
+        is_active: true,
+        allow_video: false,
+        locations: [default_in_person_location()],
+        calendar_integration_id: calendar_integration_id,
+        target_calendar_id: target_calendar_id,
+        reminder_config: [%{value: 30, unit: "minutes"}],
+        inserted_at: now,
+        updated_at: now
+      },
+      %{
+        user_id: user_id,
+        name: "30 Minutes",
+        description: "In-depth discussion or detailed review",
+        duration_minutes: 30,
+        icon: "hero-rocket-launch",
+        sort_order: 1,
+        is_active: true,
+        allow_video: false,
+        locations: [default_in_person_location()],
+        calendar_integration_id: calendar_integration_id,
+        target_calendar_id: target_calendar_id,
+        reminder_config: [%{value: 30, unit: "minutes"}],
+        inserted_at: now,
+        updated_at: now
+      }
+    ]
+  end
+
+  # These templates are bulk-inserted, so they bypass the changeset. Ecto
+  # still dumps the embed on the way to the database and refuses anything but
+  # the struct, so the struct is what the template carries.
+  # The label is stored as the English default on purpose:
+  # `LocationSelection.options/1` shows it in the reader's language.
+  defp default_in_person_location do
+    %LocationOption{
+      id: UUID.generate(),
+      kind: "in_person",
+      label: "In person",
+      position: 0
+    }
+  end
+end

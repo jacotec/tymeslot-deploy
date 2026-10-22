@@ -1,0 +1,424 @@
+defmodule TymeslotWeb.Dashboard.MeetingSettings.Card do
+  @moduledoc """
+  Component for displaying meeting type cards with toggle and action buttons.
+  """
+  use Phoenix.Component
+  use Gettext, backend: TymeslotWeb.Gettext
+  import TymeslotWeb.Components.PaymentHelpers, only: [format_amount: 2]
+  alias Tymeslot.Integrations.Calendar.DisplayHelpers
+  alias Tymeslot.MeetingTypes
+  alias Tymeslot.MeetingTypes.LocationOption
+  alias TymeslotWeb.Components.CoreComponents.Buttons
+  alias TymeslotWeb.Components.CoreComponents.Containers
+  alias TymeslotWeb.Components.CoreComponents.Feedback
+  alias TymeslotWeb.Components.CoreComponents.Icons
+  alias TymeslotWeb.Components.Icons.ProviderIcon
+  alias TymeslotWeb.Components.UI.StatusSwitch
+  alias TymeslotWeb.Dashboard.DashboardFormat
+
+  @doc """
+  Renders a meeting type card with status toggle and action buttons.
+  """
+  attr :type, :map, required: true
+  attr :myself, :any, required: true
+  attr :currency, :string, default: "eur"
+  attr :icon_size, :string, default: "mini", values: ["compact", "medium", "large", "mini"]
+  attr :venues, :list, default: [], doc: "the organiser's saved venues, to name them"
+
+  attr :group_bookings_allowed, :boolean,
+    default: true,
+    doc: "whether the host may take group bookings; a group type without it is paused"
+
+  attr :payments_accepted, :boolean,
+    default: true,
+    doc: "whether the host can take payments; a paid type without it is not offered to guests"
+
+  attr :next_date, :any,
+    default: :not_fixed,
+    doc: "a fixed-date type's next date open for registration, or nil when it has none"
+
+  attr :timezone, :string, default: "Etc/UTC"
+  attr :time_format, :string, default: "24h"
+
+  @spec meeting_type_card(map()) :: Phoenix.LiveView.Rendered.t()
+  def meeting_type_card(assigns) do
+    ~H"""
+    <Containers.card
+      padding={:xs}
+      class={if(@type.is_active, do: "card-glass-available", else: "card-glass-unavailable")}
+    >
+      <div class="flex items-center gap-3">
+        <%!-- Drag Handle --%>
+        <div class="cursor-grab active:cursor-grabbing text-tymeslot-400 shrink-0">
+          <Icons.icon name="hero-bars-2" class="w-5 h-5" />
+        </div>
+
+        <%= if @type.icon && @type.icon != "none" do %>
+          <Icons.icon name={@type.icon} class="w-5 h-5 text-tymeslot-600 shrink-0" />
+        <% end %>
+
+        <%!-- Name + details --%>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 min-w-0">
+            <h2 class="text-token-lg font-semibold text-tymeslot-900 truncate">
+              {@type.name}
+            </h2>
+            <Feedback.pill
+              :if={@type.is_private}
+              icon="hero-eye-slash-mini"
+              title={
+                dgettext(
+                  "dashboard_meeting_types",
+                  "Hidden from your public booking page; reachable only by its direct link"
+                )
+              }
+            >
+              {dgettext("dashboard_meeting_types", "Unlisted")}
+            </Feedback.pill>
+            <Feedback.pill
+              :if={is_nil(@next_date)}
+              tone={:warning}
+              icon="hero-calendar-mini"
+              title={
+                dgettext(
+                  "dashboard_meeting_types",
+                  "Not on your booking page until one of its dates is open for registration. Plan a date, or move a registration close."
+                )
+              }
+              data-testid="no-open-dates"
+            >
+              {dgettext("dashboard_meeting_types", "No open dates")}
+            </Feedback.pill>
+            <Feedback.pill
+              :if={group_paused?(@type, @group_bookings_allowed)}
+              tone={:warning}
+              icon="hero-pause-circle-mini"
+              data-testid="group-type-paused"
+            >
+              {dgettext("dashboard_meeting_types", "Paused")}
+            </Feedback.pill>
+            <Feedback.pill
+              :if={unsellable?(@type, @payments_accepted)}
+              tone={:warning}
+              icon="hero-exclamation-triangle-mini"
+              data-testid="paid-type-unsellable"
+            >
+              {dgettext("dashboard_meeting_types", "Not offered")}
+            </Feedback.pill>
+          </div>
+          <p
+            :if={described?(@type)}
+            class="mt-0.5 text-token-xs text-tymeslot-500 leading-relaxed line-clamp-2"
+          >
+            {@type.description}
+          </p>
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5 text-token-xs text-tymeslot-600">
+            <span class="flex items-center shrink-0">
+              <Icons.icon name="hero-clock" class="w-3.5 h-3.5 mr-1" />
+              {dgettext("dashboard_meeting_types", "%{minutes} min", minutes: @type.duration_minutes)}
+            </span>
+            <%= if paid?(@type) do %>
+              <span class="flex items-center shrink-0 font-medium text-green-600">
+                <Icons.icon name="hero-banknotes-mini" class="w-3.5 h-3.5 mr-1" />
+                {format_amount(@type.price_cents, @currency)}
+              </span>
+            <% end %>
+            <span
+              :if={MeetingTypes.group_type?(@type)}
+              class="flex items-center shrink-0"
+              data-testid="group-type-marker"
+            >
+              <Icons.icon name="hero-users-mini" class="w-3.5 h-3.5 mr-1 text-tymeslot-500" />
+              {dgettext("dashboard_meeting_types", "Group · up to %{count}",
+                count: @type.max_participants
+              )}
+            </span>
+            <span
+              :if={match?(%DateTime{}, @next_date)}
+              class="flex items-center shrink-0"
+              data-testid="next-fixed-date"
+            >
+              <Icons.icon name="hero-calendar-days-mini" class="w-3.5 h-3.5 mr-1 text-tymeslot-500" />
+              {dgettext("dashboard_meeting_types", "Next date: %{date}",
+                date: next_date_label(@next_date, @timezone, @time_format)
+              )}
+            </span>
+            <.location_summary type={@type} icon_size={@icon_size} venues={@venues} />
+            <%= if @type.calendar_integration do %>
+              <span class="flex items-center min-w-0">
+                <span class="mr-1.5 shrink-0">
+                  <ProviderIcon.provider_icon
+                    provider={@type.calendar_integration.provider}
+                    size={@icon_size}
+                  />
+                </span>
+                <span class="truncate max-w-[8rem]">
+                  {@type.calendar_integration.name}
+                </span>
+                <span class="ml-1 text-tymeslot-500 shrink-0">
+                  ({calendar_display_name(@type)})
+                </span>
+                <.target_calendar_warning type={@type} />
+              </span>
+            <% end %>
+            <%= if custom_question_count(@type) > 0 do %>
+              <span class="flex items-center shrink-0 text-tymeslot-500">
+                <Icons.icon name="hero-question-mark-circle-mini" class="w-3.5 h-3.5 mr-1" />
+                {custom_questions_label(@type)}
+              </span>
+            <% end %>
+          </div>
+          <p
+            :if={group_paused?(@type, @group_bookings_allowed)}
+            class="mt-1 text-token-xs text-amber-700 leading-relaxed"
+            data-testid="group-type-paused-notice"
+          >
+            {dgettext(
+              "dashboard_meeting_types",
+              "Group bookings are not included in your current plan, so this meeting type is taking no new bookings. Existing bookings are unaffected. Upgrade, or set the participant limit to 1, to take bookings again."
+            )}
+          </p>
+          <p
+            :if={unsellable?(@type, @payments_accepted)}
+            class="mt-1 text-token-xs text-amber-700 leading-relaxed"
+            data-testid="paid-type-unsellable-notice"
+          >
+            {dgettext(
+              "dashboard_meeting_types",
+              "Not offered to guests until payments are reconnected. Existing bookings are unaffected."
+            )}
+          </p>
+        </div>
+
+        <%!-- Actions. Each names its meeting type, as the switch does, so a
+              screen reader's list of buttons tells the cards apart. --%>
+        <div class="flex items-center gap-2 shrink-0">
+          <Buttons.icon_button
+            icon="hero-pencil-square"
+            size={:sm}
+            label={dgettext("dashboard_meeting_types", "Edit %{name}", name: @type.name)}
+            tooltip={dgettext("dashboard_meeting_types", "Edit")}
+            phx-click="edit_type"
+            phx-value-id={@type.id}
+            phx-target={@myself}
+          />
+
+          <Buttons.icon_button
+            icon="hero-trash"
+            variant={:danger}
+            size={:sm}
+            label={dgettext("dashboard_meeting_types", "Delete %{name}", name: @type.name)}
+            tooltip={dgettext("dashboard_meeting_types", "Delete")}
+            phx-click="show_delete_modal"
+            phx-value-id={@type.id}
+            phx-target={@myself}
+          />
+
+          <StatusSwitch.status_switch
+            id={"meeting-type-toggle-#{@type.id}"}
+            checked={@type.is_active}
+            size={:small}
+            on_change="toggle_type"
+            target={@myself}
+            phx-value-id={@type.id}
+            aria_label={
+              dgettext("dashboard_meeting_types", "Toggle %{name} availability", name: @type.name)
+            }
+            class="shrink-0"
+          />
+        </div>
+      </div>
+    </Containers.card>
+    """
+  end
+
+  # Flags a meeting type whose stored booking target can no longer take the
+  # booking, so a host reading the list sees the problem without opening the
+  # editor. Renders nothing while the target is healthy.
+  attr :type, :map, required: true
+
+  @spec target_calendar_warning(map()) :: Phoenix.LiveView.Rendered.t()
+  defp target_calendar_warning(assigns) do
+    assigns =
+      assign(assigns, :warning, target_calendar_warning_text(assigns.type))
+
+    ~H"""
+    <Feedback.pill
+      :if={@warning}
+      tone={:warning}
+      icon="hero-exclamation-triangle-micro"
+      class="ml-1"
+      title={@warning.title}
+    >
+      {@warning.label}
+    </Feedback.pill>
+    """
+  end
+
+  defp target_calendar_warning_text(type) do
+    case MeetingTypes.target_calendar_status(type) do
+      :ok ->
+        nil
+
+      :read_only ->
+        %{
+          label: dgettext("dashboard_meeting_types", "Read-only"),
+          title:
+            dgettext(
+              "dashboard_meeting_types",
+              "This meeting type books into a calendar you can no longer write to. Edit it and choose another calendar."
+            )
+        }
+
+      :missing ->
+        %{
+          label: dgettext("dashboard_meeting_types", "Calendar gone"),
+          title:
+            dgettext(
+              "dashboard_meeting_types",
+              "The calendar this meeting type books into is no longer on the connected account. Edit it and choose another calendar."
+            )
+        }
+    end
+  end
+
+  # A group type saved while the host had group bookings, kept after they lost
+  # access: it keeps its bookings but takes no new ones (see
+  # `Tymeslot.MeetingTypes.GroupAccess`).
+  defp next_date_label(datetime, timezone, time_format) do
+    date = datetime |> DashboardFormat.local_date(timezone) |> DashboardFormat.short_date()
+    "#{date}, #{DashboardFormat.clock(datetime, timezone, time_format)}"
+  end
+
+  defp group_paused?(type, group_bookings_allowed),
+    do: not group_bookings_allowed and MeetingTypes.group_type?(type)
+
+  # A paid type whose host cannot take payments right now: the booking page
+  # leaves it out (see `Tymeslot.MeetingTypes.PaymentAccess`), so the host is
+  # told here rather than finding out from a guest.
+  defp unsellable?(type, payments_accepted),
+    do: not payments_accepted and type.payment_required == true
+
+  defp paid?(%{payment_required: true, price_cents: cents}) when is_integer(cents), do: true
+  defp paid?(_type), do: false
+
+  defp described?(%{description: nil}), do: false
+  defp described?(%{description: description}), do: String.trim(description) != ""
+
+  # One location is named; several are counted. Naming them all would push
+  # the calendar and question badges off the row on a card that is already a
+  # single line of metadata.
+  attr :type, :map, required: true
+  attr :icon_size, :string, required: true
+  attr :venues, :list, required: true
+
+  defp location_summary(assigns) do
+    assigns = assign(assigns, :locations, MeetingTypes.location_options(assigns.type))
+
+    ~H"""
+    <span :if={length(@locations) > 1} class="flex items-center shrink-0">
+      <Icons.icon name="hero-map-pin-mini" class="w-3.5 h-3.5 mr-1 text-tymeslot-500" />
+      <span>
+        {dngettext(
+          "dashboard_meeting_types",
+          "%{count} location",
+          "%{count} locations",
+          length(@locations)
+        )}
+      </span>
+    </span>
+    <span :if={match?([_single], @locations)} class="flex items-center min-w-0">
+      <span class="mr-1.5 shrink-0">
+        <%!-- A video location keeps its provider's own mark, which is how the
+              host recognises which account the rooms land on; the other kinds
+              have no provider and take a plain glyph. --%>
+        <ProviderIcon.provider_icon
+          :if={video_provider(hd(@locations), @type)}
+          provider={video_provider(hd(@locations), @type)}
+          size={@icon_size}
+        />
+        <Icons.icon
+          :if={is_nil(video_provider(hd(@locations), @type))}
+          name={kind_icon(hd(@locations).kind)}
+          class="w-3.5 h-3.5 text-tymeslot-500"
+        />
+      </span>
+      <span class="truncate max-w-[10rem]">{single_label(hd(@locations), @venues)}</span>
+    </span>
+    """
+  end
+
+  # A single in-person location reads as where the meeting is: its one saved
+  # venue by name, or how many the booker picks between. Venue ids no longer
+  # in the library are ignored, so a deleted venue never shows; with none left
+  # the location's own label stands.
+  defp single_label(%LocationOption{kind: "in_person", venue_ids: ids} = location, venues) do
+    case Enum.filter(venues, &(&1.id in ids)) do
+      [] ->
+        location.label
+
+      [venue] ->
+        venue.name
+
+      several ->
+        dngettext(
+          "dashboard_meeting_types",
+          "%{count} location",
+          "%{count} locations",
+          length(several)
+        )
+    end
+  end
+
+  defp single_label(location, _venues), do: location.label
+
+  # The provider whose mark a video location shows, or nil for a location
+  # that is not a video call (or whose integration has since been deleted,
+  # leaving nothing to name).
+  defp video_provider(%{kind: "video"}, %{video_integration: %{provider: provider}}), do: provider
+  defp video_provider(_location, _type), do: nil
+
+  defp kind_icon("video"), do: "hero-video-camera-mini"
+  defp kind_icon("phone"), do: "hero-phone-mini"
+  defp kind_icon("in_person"), do: "hero-building-office-mini"
+  defp kind_icon(_kind), do: "hero-map-pin-mini"
+
+  defp custom_question_count(%{custom_fields: fields}) when is_list(fields), do: length(fields)
+  defp custom_question_count(_type), do: 0
+
+  defp custom_questions_label(type) do
+    count = custom_question_count(type)
+
+    dngettext(
+      "dashboard_meeting_types",
+      "+%{count} custom question",
+      "+%{count} custom questions",
+      count,
+      count: count
+    )
+  end
+
+  defp calendar_display_name(%{calendar_integration: integration} = type) do
+    calendar = Enum.find(integration.calendar_list || [], &(&1.id == type.target_calendar_id))
+
+    name =
+      if calendar do
+        DisplayHelpers.extract_calendar_display_name(calendar)
+      else
+        dgettext("dashboard_meeting_types", "Calendar")
+      end
+
+    truncate_calendar_name(name)
+  end
+
+  defp truncate_calendar_name(name) when is_binary(name) do
+    max_length = 15
+    ellipsis = "..."
+
+    if String.length(name) > max_length do
+      String.slice(name, 0, max_length - String.length(ellipsis)) <> ellipsis
+    else
+      name
+    end
+  end
+end
