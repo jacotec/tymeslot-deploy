@@ -135,6 +135,30 @@ jobs:
           RELEASE_TAG: ${{ steps.plan.outputs.tag }}
         run: scripts/assemble.sh src
 
+      # rustler_precompiled fetches mjml's NIF from a GitHub release with
+      # Erlang's :httpc, which refuses a redirect whose headers exceed 10 KiB
+      # (`header_too_long`), as GitHub's release-asset redirects now do. curl
+      # follows them, so the NIF is fetched here into rustler_precompiled's
+      # cache (it checks the checksum before using it) for the CI steps, and
+      # into the build context for the image, whose Dockerfile gets a line to
+      # copy it into the same cache. A failed fetch only warns: the regular
+      # download is still tried.
+      - name: Prefetch precompiled NIFs
+        if: steps.plan.outputs.build == 'true'
+        run: |
+          version=$(grep -oP '"mjml": \{:hex, :mjml, "\K[0-9.]+' src/mix.lock)
+          file="libmjml_nif-v${version}-nif-2.16-x86_64-unknown-linux-gnu.so.tar.gz"
+          url="https://github.com/adoptoposs/mjml_nif/releases/download/v${version}/${file}"
+          cache="$HOME/.cache/rustler_precompiled/precompiled_nifs"
+          mkdir -p "$cache" src/.nif-cache
+          if curl -fsSL --retry 3 -o "$cache/$file" "$url"; then
+            cp "$cache/$file" src/.nif-cache/
+            sed -i 's|^RUN mix do deps.compile + compile$|COPY .nif-cache/ /root/.cache/rustler_precompiled/precompiled_nifs/\n&|' src/Dockerfile.docker
+            grep -n "nif-cache" src/Dockerfile.docker || echo "::warning::Dockerfile not patched for the NIF cache"
+          else
+            echo "::warning::Could not prefetch $file"
+          fi
+
       - uses: erlef/setup-beam@v1
         if: steps.plan.outputs.build == 'true'
         with:
