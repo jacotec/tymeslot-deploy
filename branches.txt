@@ -3,9 +3,4 @@
 # ignored.
 feature/shared-availability-guests
 feature/multiple-durations
-feature/poll-email-confirmation
-feature/poll-invitations
-feature/poll-management
-fix/poll-meeting-managed-by-host
 feature/extra-availability
-fix/poll-confirm-host-as-voter
