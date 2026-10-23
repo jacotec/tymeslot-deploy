@@ -162,6 +162,17 @@ jobs:
           cp -r src/.nif-cache/. "$HOME/.cache/"
           sed -i 's|^RUN mix do deps.compile + compile$|COPY .nif-cache/ /root/.cache/\n&|' src/Dockerfile.docker
           grep -n "nif-cache" src/Dockerfile.docker || echo "::warning::Dockerfile not patched for the NIF cache"
+          # The tailwind package fetches its binary the same way when the image
+          # builds its assets, and skips that when the binary is in _build.
+          tv=$(grep -A1 '^config :tailwind,$' src/config/config.exs | grep -oP 'version: "\K[0-9.]+' | head -1)
+          mkdir -p src/.tool-cache
+          if curl -fsSL --retry 3 -o "src/.tool-cache/tailwind-linux-x64-$tv" "https://github.com/tailwindlabs/tailwindcss/releases/download/v$tv/tailwindcss-linux-x64"; then
+            echo "fetched tailwind $tv"
+            sed -i 's|^RUN for i in 1 2 3 4 5; do \\$|COPY --chmod=755 .tool-cache/ /app/_build/\n&|' src/Dockerfile.docker
+            grep -n "tool-cache" src/Dockerfile.docker || echo "::warning::Dockerfile not patched for tailwind"
+          else
+            echo "::warning::Could not prefetch tailwind $tv"
+          fi
 
       - uses: erlef/setup-beam@v1
         if: steps.plan.outputs.build == 'true'
