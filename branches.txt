@@ -8,3 +8,6 @@ feature/extra-availability
 # zone abbreviation of event times; b4d18297c, a test pinned to summer time);
 # drop with the next release.
 deploy/dst-fixes
+# Security updates from main and on top (hackney 4.9.1 via 8608c3d1b, bandit 1.14.0),
+# for advisories published on 26 Oct 2026; drop once a release carries them.
+deploy/security-updates
