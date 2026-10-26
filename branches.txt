@@ -4,6 +4,7 @@
 feature/shared-availability-guests
 feature/multiple-durations
 feature/extra-availability
-# Luka's fix (b4d18297c on main) for tests that fail since the end of summer time;
+# Luka's fixes from main for what the end of summer time broke (461d7cadb, the
+# zone abbreviation of event times; b4d18297c, a test pinned to summer time);
 # drop with the next release.
-deploy/seat-locked-test-dst-fix
+deploy/dst-fixes
