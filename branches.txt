@@ -4,3 +4,6 @@
 feature/shared-availability-guests
 feature/multiple-durations
 feature/extra-availability
+# Luka's fix (b4d18297c on main) for tests that fail since the end of summer time;
+# drop with the next release.
+deploy/seat-locked-test-dst-fix
