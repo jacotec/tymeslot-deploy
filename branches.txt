@@ -2,6 +2,5 @@
 # upstream release tag. One branch per line; blank lines and comments are
 # ignored.
 feature/shared-availability-guests
-feature/extra-availability
 # fix/ignore-client-closures on top of the release, until it lands upstream.
 deploy/ignore-client-closures
