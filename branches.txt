@@ -2,12 +2,6 @@
 # upstream release tag. One branch per line; blank lines and comments are
 # ignored.
 feature/shared-availability-guests
-feature/multiple-durations
 feature/extra-availability
-# Luka's fixes from main for what the end of summer time broke (461d7cadb, the
-# zone abbreviation of event times; b4d18297c, a test pinned to summer time);
-# drop with the next release.
-deploy/dst-fixes
-# Security updates from main and on top (hackney 4.9.1 via 8608c3d1b, bandit 1.14.0),
-# for advisories published on 26 Oct 2026; drop once a release carries them.
-deploy/security-updates
+# fix/ignore-client-closures on top of the release, until it lands upstream.
+deploy/ignore-client-closures
