@@ -2,8 +2,3 @@
 # upstream release tag. One branch per line; blank lines and comments are
 # ignored.
 feature/shared-availability-guests
-# fix/ignore-client-closures on top of the release, until it lands upstream.
-deploy/ignore-client-closures
-# bandit 1.14.1 for GHSA-pxjf-g536-7r93 (EEF-CVE-2026-116078, published 28 Oct 2026);
-# drop once a release carries it.
-deploy/bandit-1.14.1
