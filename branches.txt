@@ -2,3 +2,6 @@
 # upstream release tag. One branch per line; blank lines and comments are
 # ignored.
 feature/shared-availability-guests
+feature/quick-add-host-managed-meetings
+feature/quick-add-locations
+feature/carddav-contact-suggestions
