@@ -2,6 +2,9 @@
 # upstream release tag. One branch per line; blank lines and comments are
 # ignored.
 feature/shared-availability-guests
-feature/quick-add-host-managed-meetings
-feature/quick-add-locations
-feature/carddav-contact-suggestions
+# Until the release after 1.42.0: snapshots of #206-#208 as they stood on
+# 1.42.0. Their feature branches now carry upstream/main, which would pull
+# unreleased upstream work into the image.
+deploy/quick-add-host-managed-meetings
+deploy/quick-add-locations
+deploy/carddav-contact-suggestions
