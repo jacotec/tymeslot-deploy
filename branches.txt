@@ -8,3 +8,6 @@ feature/shared-availability-guests
 deploy/quick-add-host-managed-meetings
 deploy/quick-add-locations
 deploy/carddav-contact-suggestions
+# Poll location (based on #207): v1.42.0 + the #207 snapshot + the commit,
+# without the upstream/main its feature branch carries.
+deploy/poll-location
