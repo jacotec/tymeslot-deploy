@@ -2,12 +2,12 @@
 # upstream release tag. One branch per line; blank lines and comments are
 # ignored.
 feature/shared-availability-guests
-# Until the release after 1.42.0: snapshots of #206-#208 as they stood on
-# 1.42.0. Their feature branches now carry upstream/main, which would pull
-# unreleased upstream work into the image.
+# Until the release after 1.43.0: snapshots of #206, #208 and #213 on 1.43.0.
+# Their feature branches now carry upstream/main, which would pull unreleased
+# upstream work into the image. The #206 snapshot carries upstream's move of
+# the calendar modals' strings (526dfc7de), without which its catalogue
+# exceeds the 200-message limit; the #213 snapshot carries #207 (merged
+# upstream after 1.43.0) with upstream's follow-up fixes to it.
 deploy/quick-add-host-managed-meetings
-deploy/quick-add-locations
 deploy/carddav-contact-suggestions
-# Poll location (based on #207): v1.42.0 + the #207 snapshot + the commit,
-# without the upstream/main its feature branch carries.
-deploy/poll-location
+deploy/poll-location-v143
