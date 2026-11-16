@@ -3,3 +3,4 @@
 # ignored.
 feature/shared-availability-guests
 feature/carddav-contact-suggestions
+feature/side-panel-meeting-options
