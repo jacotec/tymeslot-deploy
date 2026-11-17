@@ -7,3 +7,4 @@ feature/side-panel-meeting-options
 fix/side-panel-custom-reminders
 fix/side-panel-footer-wraps
 fix/calendar-invitation-organizer-name
+fix/contact-mode-guests-survive-sync
