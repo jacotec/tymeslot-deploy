@@ -3,9 +3,3 @@
 # ignored.
 feature/shared-availability-guests
 feature/carddav-contact-suggestions
-feature/side-panel-meeting-options
-fix/side-panel-custom-reminders
-fix/side-panel-footer-wraps
-fix/calendar-invitation-organizer-name
-fix/contact-mode-guests-survive-sync
-fix/calendar-guest-reply-not-requested
