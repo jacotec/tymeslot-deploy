@@ -3,3 +3,6 @@
 # ignored.
 feature/shared-availability-guests
 feature/carddav-contact-suggestions
+# Temporary: upstream test fails in weeks whose Monday ends a month. Drop once
+# the fix is in a release.
+fix/timezone-test-month-boundary
